@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Input – VanOpt Shipment Optimizer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app-shell">
+    <nav class="nav">
+        <a href="index.html" class="active">Input</a>
+        <a href="output.html">Output</a>
+    </nav>
+
+    <header>
+        <h1><span class="logo-dot"></span> VanOpt Shipment Optimizer</h1>
+        <p>Set max volume, add shipments one by one, then click Optimize. You’ll be taken to the Output page to see results.</p>
+    </header>
+
+    <section class="card">
+        <div class="card-header">
+            <h2>New optimization</h2>
+            <span class="subtle">Max volume (dm³) and available shipments.</span>
+        </div>
+
+        <div class="field-group">
+            <label for="maxVolume">Max volume (dm³)</label>
+            <input id="maxVolume" type="number" min="1" step="1" placeholder="e.g. 15">
+        </div>
+
+        <div class="field-group">
+            <label>Available shipments</label>
+            <table>
+                <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Volume</th>
+                    <th>Revenue</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody id="shipmentsBody"></tbody>
+                <tfoot>
+                <tr>
+                    <td><input id="newName" type="text" placeholder="Parcel name"></td>
+                    <td><input id="newVolume" type="number" min="1" step="1" placeholder="5"></td>
+                    <td><input id="newRevenue" type="number" min="0" step="1" placeholder="120"></td>
+                    <td style="text-align:right;">
+                        <button id="addShipment" class="btn btn-primary" type="button">+ Add</button>
+                    </td>
+                </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px;">
+            <div class="pill">
+                Shipments: <strong id="shipmentsCount">0</strong>
+                · Total volume: <strong id="shipmentsTotalVolume">0</strong>
+            </div>
+            <button id="runOptimize" class="btn btn-primary" type="button">Optimize</button>
+        </div>
+
+        <div id="inputError" class="alert alert-error" style="display:none;"></div>
+    </section>
+</div>
+
+<script>
+    const apiBase = '/api/v1';
+    const shipments = [];
+
+    const shipmentsBody = document.getElementById('shipmentsBody');
+    const shipmentsCount = document.getElementById('shipmentsCount');
+    const shipmentsTotalVolume = document.getElementById('shipmentsTotalVolume');
+    const addShipmentBtn = document.getElementById('addShipment');
+    const runOptimizeBtn = document.getElementById('runOptimize');
+    const inputError = document.getElementById('inputError');
+    const maxVolumeInput = document.getElementById('maxVolume');
+    const newNameInput = document.getElementById('newName');
+    const newVolumeInput = document.getElementById('newVolume');
+    const newRevenueInput = document.getElementById('newRevenue');
+
+    function escapeHtml(str) {
+        return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c);
+    }
+
+    function renderShipments() {
+        let totalVol = 0;
+        shipmentsBody.innerHTML = '';
+        shipments.forEach((s, i) => {
+            totalVol += s.volume;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${escapeHtml(s.name)}</td>
+                <td>${s.volume}</td>
+                <td>${s.revenue}</td>
+                <td style="text-align:right;">
+                    <button class="btn-icon" type="button" data-index="${i}">×</button>
+                </td>`;
+            shipmentsBody.appendChild(tr);
+        });
+        shipmentsBody.querySelectorAll('.btn-icon').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.getAttribute('data-index'), 10);
+                if (!isNaN(idx)) { shipments.splice(idx, 1); renderShipments(); }
+            });
+        });
+        shipmentsCount.textContent = shipments.length;
+        shipmentsTotalVolume.textContent = totalVol;
+    }
+
+    function showError(msg) {
+        inputError.style.display = 'block';
+        inputError.textContent = msg;
+    }
+    function clearError() {
+        inputError.style.display = 'none';
+        inputError.textContent = '';
+    }
+
+    addShipmentBtn.addEventListener('click', () => {
+        const name = newNameInput.value.trim();
+        const volume = parseInt(newVolumeInput.value, 10);
+        const revenue = parseInt(newRevenueInput.value, 10);
+        if (!name) { showError('Enter a shipment name.'); return; }
+        if (!Number.isFinite(volume) || volume <= 0) { showError('Volume must be a positive integer.'); return; }
+        if (!Number.isFinite(revenue) || revenue < 0) { showError('Revenue must be zero or positive.'); return; }
+        clearError();
+        shipments.push({ name, volume, revenue });
+        newNameInput.value = '';
+        newVolumeInput.value = '';
+        newRevenueInput.value = '';
+        renderShipments();
+        newNameInput.focus();
+    });
+
+    runOptimizeBtn.addEventListener('click', async () => {
+        clearError();
+        const maxVolume = parseInt(maxVolumeInput.value, 10);
+        if (!Number.isFinite(maxVolume) || maxVolume <= 0) {
+            showError('Max volume must be a positive integer.');
+            return;
+        }
+        if (shipments.length === 0) {
+            showError('Add at least one shipment.');
+            return;
+        }
+
+        const payload = {
+            maxVolume,
+            availableShipments: shipments.map(s => ({ name: s.name, volume: s.volume, revenue: s.revenue }))
+        };
+
+        runOptimizeBtn.disabled = true;
+        runOptimizeBtn.textContent = 'Running…';
+
+        try {
+            const res = await fetch(apiBase + '/optimize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+                const problem = await res.json().catch(() => ({}));
+                showError(problem.detail || 'Request failed.');
+                return;
+            }
+
+            const data = await res.json();
+            window.location.href = 'output.html?highlight=' + encodeURIComponent(data.requestId || '');
+        } catch (e) {
+            showError('Could not reach the backend. Is the server running?');
+        } finally {
+            runOptimizeBtn.disabled = false;
+            runOptimizeBtn.textContent = 'Optimize';
+        }
+    });
+
+    renderShipments();
+</script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Output – VanOpt Shipment Optimizer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app-shell">
+    <nav class="nav">
+        <a href="index.html">Input</a>
+        <a href="output.html" class="active">Output</a>
+    </nav>
+
+    <header>
+        <h1><span class="logo-dot"></span> Optimization results</h1>
+        <p>All runs with date, total volume and revenue. Click “View in detail” to see selected shipments and totals.</p>
+    </header>
+
+    <section class="card">
+        <div class="card-header">
+            <h2>Optimized runs</h2>
+            <span class="subtle">Latest first. Expand a row to see individual items.</span>
+        </div>
+
+        <div id="runList" class="run-list">
+            <div class="empty-state loading">Loading…</div>
+        </div>
+    </section>
+</div>
+
+<script>
+    const apiBase = '/api/v1';
+    const runListEl = document.getElementById('runList');
+
+    function escapeHtml(str) {
+        return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c);
+    }
+
+    function formatDate(iso) {
+        if (!iso) return '–';
+        const d = new Date(iso);
+        return d.toLocaleString();
+    }
+
+    function getHighlightId() {
+        const params = new URLSearchParams(window.location.search);
+        return params.get('highlight') || '';
+    }
+
+    async function loadRuns() {
+        try {
+            const res = await fetch(apiBase + '/optimizations?page=0&size=50');
+            if (!res.ok) {
+                runListEl.innerHTML = '<div class="empty-state">Failed to load runs.</div>';
+                return;
+            }
+            const page = await res.json();
+            const items = page.content || [];
+
+            if (items.length === 0) {
+                runListEl.innerHTML = '<div class="empty-state">No optimizations yet. <a href="index.html" style="color: var(--primary);">Go to Input</a> and run one.</div>';
+                return;
+            }
+
+            const highlightId = getHighlightId();
+            runListEl.innerHTML = '';
+
+            items.forEach(item => {
+                const runItem = document.createElement('div');
+                runItem.className = 'run-item' + (item.requestId === highlightId ? ' highlight' : '');
+                runItem.dataset.requestId = item.requestId;
+
+                const totalRevenue = Number(item.totalRevenue ?? item.total_revenue ?? 0);
+                const totalVolume = Number(item.totalVolume ?? item.total_volume ?? 0);
+
+                runItem.innerHTML = `
+                    <div class="run-row">
+                        <div class="run-meta">
+                            <span class="run-date">${escapeHtml(formatDate(item.createdAt))}</span>
+                            <span class="run-revenue">Total revenue: ${totalRevenue}</span>
+                            <span class="run-volume">Total volume: ${totalVolume} dm³</span>
+                            <span class="run-id">${escapeHtml(item.requestId || '')}</span>
+                        </div>
+                        <div class="run-actions">
+                            <button type="button" class="btn btn-ghost view-detail">View in detail</button>
+                        </div>
+                    </div>
+                    <div class="run-detail" id="detail-${escapeHtml(String(item.requestId))}">
+                        <div class="detail-totals loading">Loading…</div>
+                        <div class="detail-table-wrap"></div>
+                    </div>
+                `;
+
+                const detailPanel = runItem.querySelector('.run-detail');
+                const viewBtn = runItem.querySelector('.view-detail');
+
+                viewBtn.addEventListener('click', () => {
+                    const isOpen = detailPanel.classList.toggle('open');
+                    if (isOpen && !detailPanel.dataset.loaded) {
+                        loadDetail(item.requestId, detailPanel);
+                    }
+                });
+
+                runListEl.appendChild(runItem);
+            });
+
+            const highlighted = document.querySelector('.run-item.highlight');
+            if (highlighted) {
+                highlighted.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        } catch (e) {
+            runListEl.innerHTML = '<div class="empty-state">Could not reach the backend. Is the server running?</div>';
+        }
+    }
+
+    async function loadDetail(requestId, detailPanel) {
+        const totalsEl = detailPanel.querySelector('.detail-totals');
+        const tableWrap = detailPanel.querySelector('.detail-table-wrap');
+
+        try {
+            const res = await fetch(apiBase + '/optimizations/' + encodeURIComponent(requestId));
+            if (!res.ok) {
+                totalsEl.innerHTML = '<span class="muted">Failed to load details.</span>';
+                totalsEl.classList.remove('loading');
+                return;
+            }
+            const data = await res.json();
+
+            const totalRevenue = Number(data.totalRevenue ?? data.total_revenue ?? 0);
+            const totalVolume = Number(data.totalVolume ?? data.total_volume ?? 0);
+            const selected = data.selectedShipments || data.selected_shipments || [];
+
+            totalsEl.innerHTML = `
+                <span><strong>Total revenue:</strong> ${totalRevenue}</span>
+                <span><strong>Total volume:</strong> ${totalVolume} dm³</span>
+            `;
+            totalsEl.classList.remove('loading');
+
+            if (selected.length === 0) {
+                tableWrap.innerHTML = '<table><tbody><tr><td class="muted">No shipments selected for this run.</td></tr></tbody></table>';
+            } else {
+                let tableHtml = '<table><thead><tr><th>Name</th><th>Volume</th><th>Revenue</th></tr></thead><tbody>';
+                selected.forEach(s => {
+                    tableHtml += `<tr><td>${escapeHtml(s.name)}</td><td>${s.volume}</td><td>${s.revenue}</td></tr>`;
+                });
+                tableHtml += '</tbody></table>';
+                tableWrap.innerHTML = tableHtml;
+            }
+
+            detailPanel.dataset.loaded = '1';
+        } catch (e) {
+            totalsEl.textContent = 'Failed to load details.';
+            totalsEl.classList.remove('loading');
+        }
+    }
+
+    loadRuns();
+</script>
+</body>
+</html>
