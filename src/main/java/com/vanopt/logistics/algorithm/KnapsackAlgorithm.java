@@ -28,6 +28,7 @@ public class KnapsackAlgorithm {
             }
         }
 
+
         List<Integer> selected = new ArrayList<>();
         int w = maxVolume;
         for (int i = n; i >= 1 && w > 0; i--) {
